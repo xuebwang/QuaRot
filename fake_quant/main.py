@@ -19,33 +19,107 @@ def main():
     transformers.set_seed(args.seed)
     model = model_utils.get_model(args.model, args.hf_token)
     model.eval()
-    
-    
-    # Rotate the weights
-    if args.rotate:
-        rotation_utils.fuse_layer_norms(model)
-        rotation_utils.rotate_model(model, args)
-        utils.cleanup_memory(verbos=True)
-            
-        quant_utils.add_actquant(model) #Add Activation Wrapper to the model
-        qlayers = quant_utils.find_qlayers(model)
-        for name in qlayers:
-            if 'down_proj' in name:
-                had_K, K = hadamard_utils.get_hadK(model.config.intermediate_size)
-                qlayers[name].online_full_had = True
-                qlayers[name].had_K = had_K
-                qlayers[name].K = K
-                qlayers[name].fp32_had = args.fp32_had
-            if 'o_proj' in name:
-                had_K, K = hadamard_utils.get_hadK(model.config.num_attention_heads)
-                qlayers[name].online_partial_had = True
-                qlayers[name].had_K = had_K
-                qlayers[name].K = K
-                qlayers[name].had_dim = model.config.hidden_size//model.config.num_attention_heads
-                qlayers[name].fp32_had = args.fp32_had
-    else:
-        quant_utils.add_actquant(model) #Add Activation Wrapper to the model as the rest of the code assumes it is present
+
+
+    tokenizer = transformers.AutoTokenizer.from_pretrained(args.model,
+                                              model_max_length=model.seqlen,
+                                              padding_side="left",
+                                              trust_remote_code=True,
+                                              use_fast=False)
+    if tokenizer.pad_token != "<unk>":
+        tokenizer.pad_token = tokenizer.eos_token
+    if tokenizer.pad_token is None:
+        tokenizer.pad_token = tokenizer.eos_token
+
+    trainloader = data_utils.get_loaders(
+        args.cal_dataset, nsamples=args.nsamples,
+        seed=args.seed, model=args.model,
+        seqlen=model.seqlen, eval_mode=False
+    )
+
+    model.cuda()
         
+    # # Rotate the weights
+    # if args.rotate:
+    #     rotation_utils.fuse_layer_norms(model)
+    #     rotation_utils.rotate_model(model, args)
+    #     utils.cleanup_memory(verbos=True)
+            
+        # quant_utils.add_actquant(model) #Add Activation Wrapper to the model
+        # qlayers = quant_utils.find_qlayers(model)
+        # for name in qlayers:
+        #     if 'down_proj' in name:
+        #         had_K, K = hadamard_utils.get_hadK(model.config.intermediate_size)
+        #         qlayers[name].online_full_had = True
+        #         qlayers[name].had_K = had_K
+        #         qlayers[name].K = K
+        #         qlayers[name].fp32_had = args.fp32_had
+        #     if 'o_proj' in name:
+        #         had_K, K = hadamard_utils.get_hadK(model.config.num_attention_heads)
+        #         qlayers[name].online_partial_had = True
+        #         qlayers[name].had_K = had_K
+        #         qlayers[name].K = K
+        #         qlayers[name].had_dim = model.config.hidden_size//model.config.num_attention_heads
+        #         qlayers[name].fp32_had = args.fp32_had
+    # else:
+    #     quant_utils.add_actquant(model) #Add Activation Wrapper to the model as the rest of the code assumes it is present
+
+    if args.rotate:
+        from quark.torch.algorithm.quarot.quarot import QuaRotProcessor
+        from quark.torch.quantization.config.config import QuaRotConfig
+
+        pre_quant_opt_config_file = '/proj/xcohdstaff5/dehtang/project/quark_fp4/Quark/examples/torch/language_modeling/llm_ptq/models/llama/quarot_70b_config.json'
+        
+        import json
+        with open(pre_quant_opt_config_file, 'r') as file:
+            algo_config_info = json.load(file)
+        if algo_config_info["name"] == "quarot":
+            PreQuantOptConfig = QuaRotConfig.from_dict(algo_config_info)
+            pre_quant_optimizer = QuaRotProcessor(model, PreQuantOptConfig, None)
+            pre_quant_optimizer.apply()
+
+    print(model)
+
+    if args.sq:
+
+        from datasets import load_dataset
+        dataset = load_dataset('wikitext', 'wikitext-2-raw-v1', split='train')
+        text_data = dataset["text"][:128]
+        batch_encoded = tokenizer(text_data, return_tensors="pt", padding=True, truncation=True, max_length=512)
+
+        batch_encoded = batch_encoded.to("cuda")
+        batch_encoded = batch_encoded["input_ids"]
+
+        from torch.utils.data import DataLoader
+        calib_dataloader = DataLoader(batch_encoded, batch_size=1, shuffle=False, drop_last=True)
+
+        from quark.torch.algorithm.awq.smooth import SmoothQuantProcessor
+        from quark.torch.quantization.config.config import SmoothQuantConfig
+
+        pre_quant_opt_config_file = '/proj/xcohdstaff5/dehtang/project/quark_fp4/Quark/examples/torch/language_modeling/llm_ptq/models/llama/smooth_fc_fc_config_1B.json'
+        
+        import json
+        with open(pre_quant_opt_config_file, 'r') as file:
+            algo_config_info = json.load(file)
+        if algo_config_info["name"] == "smooth":
+            PreQuantOptConfig = SmoothQuantConfig.from_dict(algo_config_info)
+
+        pre_quant_optimizer = SmoothQuantProcessor(model, PreQuantOptConfig, calib_dataloader)
+        pre_quant_optimizer.apply()
+
+        # pre_quant_opt_config_file = '/proj/xcohdstaff5/dehtang/project/quark_fp4/Quark/examples/torch/language_modeling/llm_ptq/models/llama/smooth_config_1B.json'
+        
+        # import json
+        # with open(pre_quant_opt_config_file, 'r') as file:
+        #     algo_config_info = json.load(file)
+        # if algo_config_info["name"] == "smooth":
+        #     PreQuantOptConfig = SmoothQuantConfig.from_dict(algo_config_info)
+
+        # pre_quant_optimizer = SmoothQuantProcessor(model, PreQuantOptConfig, calib_dataloader)
+        # pre_quant_optimizer.apply()
+    
+    quant_utils.add_actquant(model)
+
                 
     if args.w_bits < 16:
         save_dict = {}
@@ -59,11 +133,6 @@ def main():
         elif not args.w_rtn: # GPTQ Weight Quantization
             assert "llama" in args.model, "Only llama is supported for GPTQ!"
             
-            trainloader = data_utils.get_loaders(
-                args.cal_dataset, nsamples=args.nsamples,
-                seed=args.seed, model=args.model,
-                seqlen=model.seqlen, eval_mode=False
-            )
             quantizers = gptq_utils.gptq_fwrd(model, trainloader, utils.DEV, args)
             save_dict["w_quantizers"] = quantizers
         else: # RTN Weight Quantization
@@ -93,6 +162,12 @@ def main():
                                               groupsize=args.v_groupsize,
                                               sym=not(args.v_asym),
                                               clip_ratio=args.v_clip_ratio)
+                
+            if 'k_proj' in name and args.k_bits < 16: #Set the k_proj precision
+                qlayers[name].out_quantizer.configure(bits=args.k_bits,
+                                              groupsize=args.k_groupsize,
+                                              sym=not(args.k_asym),
+                                              clip_ratio=args.k_clip_ratio)
             
             if 'lm_head' in name: #Skip lm_head quantization   
                 layer_input_bits = 16
@@ -108,20 +183,20 @@ def main():
                                               sym=layer_a_sym,
                                               clip_ratio=layer_a_clip)
 
-    if args.k_bits < 16:
-        if args.k_pre_rope:
-            raise NotImplementedError("Pre-RoPE quantization is not supported yet!")
-        else:
-            rope_function_name = model_utils.get_rope_function_name(model)
-            layers = model_utils.get_layers(model)
-            k_quant_config = {'k_bits':args.k_bits, "k_groupsize": args.k_groupsize,
-                                          "k_sym": not(args.k_asym), "k_clip_ratio": args.k_clip_ratio}
-            for layer in layers:
-                rotation_utils.add_qk_rotation_wrapper_after_function_call_in_forward(
-                            layer.self_attn, 
-                            rope_function_name, 
-                            config=model.config,
-                            **k_quant_config)
+    # if args.k_bits < 16:
+    #     if args.k_pre_rope:
+    #         raise NotImplementedError("Pre-RoPE quantization is not supported yet!")
+    #     else:
+    #         rope_function_name = model_utils.get_rope_function_name(model)
+    #         layers = model_utils.get_layers(model)
+    #         k_quant_config = {'k_bits':args.k_bits, "k_groupsize": args.k_groupsize,
+    #                                       "k_sym": not(args.k_asym), "k_clip_ratio": args.k_clip_ratio}
+    #         for layer in layers:
+    #             rotation_utils.add_qk_rotation_wrapper_after_function_call_in_forward(
+    #                         layer.self_attn, 
+    #                         rope_function_name, 
+    #                         config=model.config,
+    #                         **k_quant_config)
         
     # Evaluating on dataset
     testloader = data_utils.get_loaders(
@@ -132,9 +207,14 @@ def main():
             hf_token=args.hf_token,
             eval_mode=True
         )
-
     
     dataset_ppl = eval_utils.evaluator(model, testloader, utils.DEV, args)
+
+    # rad_ppl = eval_utils.compute_perplexity(model, testloader, model.seqlen//2, tokenizer, seed = 0)
+
+    # print(rad_ppl)
+    
+
     if args.wandb:
             wandb.log({'ppl/{}'.format(args.eval_dataset.upper()): dataset_ppl})
 
@@ -158,14 +238,16 @@ def main():
     hflm = HFLM(pretrained=model, tokenizer=tokenizer, batch_size=args.lm_eval_batch_size)
 
     task_names = lm_eval_utils.pattern_match(args.tasks, ALL_TASKS)
-    results = lm_eval.simple_evaluate(hflm, tasks=task_names, batch_size=args.lm_eval_batch_size)['results']
+    results = lm_eval.simple_evaluate(hflm, tasks='wikitext', batch_size=args.lm_eval_batch_size)['results']
 
-    metric_vals = {task: round(result.get('acc_norm,none', result['acc,none']), 4) for task, result in results.items()}
-    metric_vals['acc_avg'] = round(sum(metric_vals.values()) / len(metric_vals.values()), 4)
-    print(metric_vals)
+    print(results)
 
-    if args.wandb:
-        wandb.log(metric_vals)
+    # metric_vals = {task: round(result.get('acc_norm,none', result['acc,none']), 4) for task, result in results.items()}
+    # metric_vals['acc_avg'] = round(sum(metric_vals.values()) / len(metric_vals.values()), 4)
+    # print(metric_vals)
+
+    # if args.wandb:
+    #     wandb.log(metric_vals)
 
 
 if __name__ == '__main__':

@@ -73,7 +73,7 @@ def parser_gen():
 
     # General Arguments
     parser.add_argument('--model', type=str, default='meta-llama/Llama-2-7b-hf',
-                        help='Model to load;', choices=supported_models)
+                        help='Model to load;')
     parser.add_argument('--seed', type=int, default=0, help='Random Seed for HuggingFace and PyTorch')
     parser.add_argument('--eval_dataset', type=str, default='wikitext2',
                         help='Dataset for Evaluation (default: wikitext2)', choices=supported_datasets,)
@@ -106,6 +106,8 @@ def parser_gen():
 
 
     # Weight Quantization Arguments
+    parser.add_argument('--sq', action=argparse.BooleanOptionalAction, default=False,
+                        help='apply smoothquant if True')
     parser.add_argument('--w_bits', type=int, default=16, 
                         help='Number of bits for weights of the Linear layers')
     parser.add_argument('--w_groupsize', type=int, default=-1, 
@@ -178,9 +180,11 @@ def parser_gen():
     parser.add_argument(
         '--tasks',
         nargs='+',
-        default=["piqa", "hellaswag", "arc_easy", "arc_challenge", "winogrande", "lambada"],
+        default=["wikitext"],
+
+        # default=["piqa", "hellaswag", "arc_easy", "arc_challenge", "winogrande", "lambada"],
     )
-    parser.add_argument('--lm_eval_batch_size', type=int, default=128, help='Batch size for evaluating with lm eval harness.')
+    parser.add_argument('--lm_eval_batch_size', type=int, default=1, help='Batch size for evaluating with lm eval harness.')
     parser.add_argument(
         "--distribute",
         action="store_true",
@@ -188,20 +192,20 @@ def parser_gen():
     )
 
     args = parser.parse_args()
-    if args.lm_eval:
-        from lm_eval import tasks
-        from lm_eval import utils as lm_eval_utils
-        from lm_eval.tasks import initialize_tasks
-        initialize_tasks()
-        for task in args.tasks:
-            if task not in lm_eval_utils.MultiChoice(tasks.ALL_TASKS):
-                raise ValueError(f"Invalid task: {task}")
+    # if args.lm_eval:
+    #     from lm_eval import tasks
+    #     from lm_eval import utils as lm_eval_utils
+    #     from lm_eval.tasks import initialize_tasks
+    #     initialize_tasks()
+    #     for task in args.tasks:
+    #         if task not in lm_eval_utils.MultiChoice(tasks.ALL_TASKS):
+    #             raise ValueError(f"Invalid task: {task}")
 
     # quant_type = f'w{args.w_bits}a{args.a_bits}_{args.rotate_mode}'
     if args.save_name is None:
         args.save_name = datetime.now().strftime("%Y%m%d_%H%M%S")
     setattr(args, 'save_path',
-            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'experiments', args.model, args.save_name))
+            os.path.join(os.path.dirname(os.path.abspath(__file__)), 'experiments', './', args.save_name))
     os.makedirs(args.save_path, exist_ok=True)
 
     config_logging(os.path.join(args.save_path, f'{args.save_name}.log'))

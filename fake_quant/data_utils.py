@@ -1,6 +1,8 @@
 import datasets
 import random
 import transformers
+import torch
+from tqdm import tqdm
 
 def get_wikitext2(nsamples, seed, seqlen, model, hf_token, eval_mode=False):
     
@@ -9,6 +11,17 @@ def get_wikitext2(nsamples, seed, seqlen, model, hf_token, eval_mode=False):
     else:
         tokenizer = transformers.AutoTokenizer.from_pretrained(model, use_fast=False, use_auth_token=hf_token)
         
+    # if eval_mode:
+    #     testdata = datasets.load_dataset('wikitext', 'wikitext-2-raw-v1', split='test')
+    #     tokenized_data = tokenizer("\n\n".join(testdata["text"])[:100000], return_tensors="pt")
+    #     dataset = []
+    #     for _ in range(nsamples):
+    #         i = random.randint(0, tokenized_data.input_ids.shape[1] - seqlen - 1)
+    #         j = i + seqlen
+    #         inp = tokenized_data.input_ids[:, i:j]
+    #         attention_mask = torch.ones((1, seqlen), dtype=torch.int64)
+    #         dataset.append({"input_ids": inp, "attention_mask": attention_mask})
+    #     return dataset
     if eval_mode:
         testdata = datasets.load_dataset('wikitext', 'wikitext-2-raw-v1', split='test')
         testenc = tokenizer("\n\n".join(testdata['text']), return_tensors='pt')
@@ -25,8 +38,9 @@ def get_wikitext2(nsamples, seed, seqlen, model, hf_token, eval_mode=False):
             tar = inp.clone()
             tar[:, :-1] = -100
             trainloader.append((inp, tar))
+            # trainloader.append({"input_ids": inp, "attention_mask": tar})
         return trainloader
-
+    
 def get_c4_new(nsamples, seed, seqlen, model, hf_token=None, eval_mode=False):
 
     if hf_token is None:

@@ -41,9 +41,9 @@ def get_llama(model_name, hf_token):
     torch.nn.init.kaiming_uniform_ = skip
     torch.nn.init.uniform_ = skip
     torch.nn.init.normal_ = skip
-    model = transformers.LlamaForCausalLM.from_pretrained(model_name, torch_dtype='auto',
+    model = transformers.AutoModelForCausalLM.from_pretrained(model_name, torch_dtype="auto",
                                                           use_auth_token=hf_token,
-                                                          low_cpu_mem_usage=True)
+                                                          trust_remote_code=True)
     model.seqlen = 2048
     logging.info('---> Loading {} Model with seq_len: {}'.format(model_name, model.seqlen))
     return model

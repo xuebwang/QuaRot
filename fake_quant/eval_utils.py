@@ -5,22 +5,117 @@ import torch
 import os
 import logging
 from tqdm import tqdm
+import random
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, Any, Dict, List, Optional, Union
+import numpy as np
 
+class DatasetToDevice(torch.utils.data.Dataset):
+    def __init__(self, data: List, device: Optional[Union[str, torch.device]]):
+        super().__init__()
+        self.data = data
+        self.device = device
+
+    def __getitem__(self, idx):
+        if self.device is not None:
+            return {name: recursive_to_device(val, self.device) for name, val in self.data[idx].items()}
+        else:
+            return self.data[idx]
+
+    def __len__(self):
+        return len(self.data)
+
+@torch.no_grad()
+def recursive_to_device(tensor_or_iterable: Union[Iterable, torch.Tensor], device) -> None:
+    if isinstance(tensor_or_iterable, torch.Tensor):
+        return tensor_or_iterable.to(device)
+    elif isinstance(tensor_or_iterable, tuple):  # Special handling of tuples, since they are immutable
+        tmp_list = []
+        for i in tensor_or_iterable:
+            tmp_list.append(recursive_to_device(i, device))
+        return tuple(tmp_list)
+    elif isinstance(tensor_or_iterable, Iterable):
+        for i in tensor_or_iterable:
+            tensor_or_iterable[i] = recursive_to_device(i, device)
+        return tensor_or_iterable
+    else:
+        raise ValueError(f"Cannot move {type(tensor_or_iterable)} to {device}")
+
+@torch.no_grad()
+def compute_perplexity(model: torch.nn.Module, data: List[Dict], context_length: int, tokenizer: Any, seed: int = 0):
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.random.manual_seed(seed)
+    model = model.to('cuda')
+    model = model.eval()
+
+    cross_entropy_loss = torch.nn.CrossEntropyLoss()
+
+    data = DatasetToDevice(data, device='cuda')
+
+    nlls = []
+    for sample in tqdm(data, desc="Computing perplexity..."):
+        sample_length = sample["input_ids"].shape[1]
+        for start_index in range(0, sample_length, context_length * 2):
+            end_index = min(start_index + sample_length, sample_length - 1)
+
+            subsample = {
+                "input_ids": sample["input_ids"][:, start_index : end_index + 1],
+                "attention_mask": sample["attention_mask"][:, start_index : end_index + 1],
+            }
+
+            # In case we are using torch.fx, we can not have optional inputs, and we have traced the model with past_key_values inputs, thus we need them here as well.
+            if "past_key_values" in sample and isinstance(model, torch.fx.GraphModule):
+                subsample["past_key_values"] = sample["past_key_values"]
+
+            # Add BOS token.
+            if tokenizer.bos_token_id is not None:
+                subsample["input_ids"][:, 0] = tokenizer.bos_token_id
+
+            use_accelerate = hasattr(model, "hf_device_map")
+            if not use_accelerate or (use_accelerate and not hasattr(model, "_hf_hook")):
+                device = next(model.parameters()).device
+                for name, val in subsample.items():
+                    subsample[name] = recursive_to_device(val, device)
+            else:
+                # In accelerate by default `io_same_device=True`, and here we want the of the model output on device.
+                device = model._hf_hook.execution_device
+                for name, val in subsample.items():
+                    subsample[name] = recursive_to_device(val, device)
+
+            lm_logits = model(**subsample)["logits"]
+
+            reference_labels = subsample["input_ids"][:, context_length:]
+
+            shift_logits = lm_logits[:, context_length - 1 : -1]
+
+            # Fuse batch and sequence length dimensions.
+            reference_labels = reference_labels.view(reference_labels.shape[-1])
+            shift_logits = shift_logits.view(-1, shift_logits.shape[-1])
+
+            loss = cross_entropy_loss(shift_logits, reference_labels)
+
+            nlls.append(loss)
+
+    ppl = torch.exp(torch.stack(nlls).mean())
+
+    return ppl
 
 @torch.no_grad()
 def evaluator(model, testenc, dev, args):
 
     model.eval()
 
-    if 'opt' in args.model:
-        opt_type = True
-        llama_type = False
-    elif 'meta' in args.model:
-        llama_type = True
-        opt_type = False
-    else:
-        raise ValueError(f'Unknown model {args.model}')
-
+    # if 'opt' in args.model:
+    #     opt_type = True
+    #     llama_type = False
+    # elif 'meta' in args.model:
+    #     llama_type = True
+    #     opt_type = False
+    # else:
+    #     raise ValueError(f'Unknown model {args.model}')
+    llama_type = True
+    opt_type = False
 
     use_cache = model.config.use_cache
     model.config.use_cache = False
@@ -37,6 +132,9 @@ def evaluator(model, testenc, dev, args):
     elif llama_type:
         layers = model.model.layers
         model.model.embed_tokens = model.model.embed_tokens.to(dev)
+        if hasattr(model.model, 'rotary_emb'):
+            # for llama-3.1
+            model.model.rotary_emb = model.model.rotary_emb.to(dev)
 
     layers[0] = layers[0].to(dev)
 
@@ -123,6 +221,9 @@ def evaluator(model, testenc, dev, args):
     elif llama_type:
         if model.model.norm is not None:
             model.model.norm = model.model.norm.to(dev)
+        if hasattr(model.model, 'rotary_emb'):
+            # for llama-3.1
+            model.model.rotary_emb = model.model.rotary_emb.to(dev)
 
     model.lm_head = model.lm_head.to(dev)
     nlls = []

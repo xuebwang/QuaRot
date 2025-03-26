@@ -150,6 +150,9 @@ def gptq_fwrd(model, dataloader, dev, args):
 
     model.model.embed_tokens = model.model.embed_tokens.to(dev)
     model.model.norm = model.model.norm.to(dev)
+    if hasattr(model.model, 'rotary_emb'):
+        # for llama-3.1
+        model.model.rotary_emb = model.model.rotary_emb.to(dev)
     layers[0] = layers[0].to(dev)
 
     dtype = next(iter(model.parameters())).dtype
@@ -179,6 +182,9 @@ def gptq_fwrd(model, dataloader, dev, args):
     layers[0] = layers[0].cpu()
     model.model.embed_tokens = model.model.embed_tokens.cpu()
     model.model.norm = model.model.norm.cpu()
+    if hasattr(model.model, 'rotary_emb'):
+        # for llama-3.1
+        model.model.rotary_emb = model.model.rotary_emb.cpu()
     torch.cuda.empty_cache()
 
     outs = torch.zeros_like(inps)

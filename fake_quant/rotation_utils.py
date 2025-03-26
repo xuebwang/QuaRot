@@ -6,7 +6,7 @@ import transformers
 import tqdm, math
 import quant_utils
 from hadamard_utils import random_hadamard_matrix, apply_exact_had_to_linear, is_pow2
-from fast_hadamard_transform import hadamard_transform
+# from fast_hadamard_transform import hadamard_transform
 
 def fuse_ln_linear(layernorm: torch.nn.Module, linear_layers: typing.Iterable[torch.nn.Linear]) -> None:
     """
