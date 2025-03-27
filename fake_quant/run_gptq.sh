@@ -3,7 +3,7 @@ set -e
 
 export HF_HOME=/mnt/raid0/xuebwang/hf_cache
 
-MODEL_NAME=Llama-3.1-8B # Meta-Llama-3.1-8B # Llama-2-70b-chat-hf # Llama-3.2-1B
+MODEL_NAME=Llama-3.1-8B # Llama-3.2-1B # Meta-Llama-3.1-8B # Llama-2-70b-chat-hf # 
 MODEL_PATH=/mnt/raid0/pretrained_model/meta-llama/${MODEL_NAME}
 
 HIP_VISIBLE_DEVICES=1 python main.py \
@@ -12,6 +12,7 @@ HIP_VISIBLE_DEVICES=1 python main.py \
     --v_bits 16 \
     --k_bits 16 \
     --w_bits 4 \
+    --w_groupsize 32 \
     --lm_eval \
     --tasks wikitext
 

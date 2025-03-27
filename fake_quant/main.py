@@ -34,7 +34,8 @@ def main():
     trainloader = data_utils.get_loaders(
         args.cal_dataset, nsamples=args.nsamples,
         seed=args.seed, model=args.model,
-        seqlen=model.seqlen, eval_mode=False
+        seqlen=model.seqlen, 
+        eval_mode=False
     )
 
     model.cuda()

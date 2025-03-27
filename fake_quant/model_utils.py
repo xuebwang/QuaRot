@@ -41,6 +41,15 @@ def get_llama(model_name, hf_token):
     torch.nn.init.kaiming_uniform_ = skip
     torch.nn.init.uniform_ = skip
     torch.nn.init.normal_ = skip
+    # from transformers import Llama3Config
+    # config = Llama3Config.from_pretrained(
+    #     model_name,
+    #     rope_scaling={
+    #         "type": "llama3",  # or "dynamic"/"linear" if extending context
+    #         "factor": 8.0,
+    #         "original_max_position_embeddings": 8192
+    #     }
+    # )
     model = transformers.AutoModelForCausalLM.from_pretrained(model_name, torch_dtype="auto",
                                                           use_auth_token=hf_token,
                                                           trust_remote_code=True)
