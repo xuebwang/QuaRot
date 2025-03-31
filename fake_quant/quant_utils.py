@@ -346,6 +346,9 @@ class ActQuantizer(torch.nn.Module):
         if self.bits == 16:
             return x
         else:
+            # if x.shape[1] == 1262:
+            #     import pdb; pdb.set_trace()
+            #     print(x.shape)
             x = quant_mx_quark(x).to(x_dtype)
             return x
 
@@ -428,6 +431,7 @@ class ActQuantizer(torch.nn.Module):
             self.scale = self.scale.unsqueeze(1).repeat(1, reshaped_x.shape[-1]).reshape(init_shape)
             self.zero = self.zero.unsqueeze(1).repeat(1, reshaped_x.shape[-1]).reshape(init_shape)
 
+
 # class ActQuantWrapper(torch.nn.Module):
 #     '''
 #         This class is a wrapper for the activation quantization.
@@ -506,6 +510,7 @@ class ActQuantizer(torch.nn.Module):
 
 #         return x
 
+
 class ActQuantWrapper(torch.nn.Module):
     '''
         This class is a wrapper for the activation quantization.
@@ -518,6 +523,7 @@ class ActQuantWrapper(torch.nn.Module):
     def __init__(self, module:torch.nn.Linear=None):
         super(ActQuantWrapper, self).__init__()
         assert isinstance(module, torch.nn.Linear)
+        self.name = "abc"
         self.module = module
         self.weight = module.weight
         self.name = None
@@ -533,6 +539,8 @@ class ActQuantWrapper(torch.nn.Module):
         self.fp32_had = False
         self.runtime_smooth = True
         self.act_scale_g128 = True
+        # print(f"ActQuantWrapper of {self.name}")
+        # import pdb; pdb.set_trace()
 
     def extra_repr(self) -> str:
         str_ = f'Input Quantizer Bits: {self.quantizer.bits}'
@@ -547,6 +555,10 @@ class ActQuantWrapper(torch.nn.Module):
 
     def forward(self, x):
         x_dtype = x.dtype
+        print(f"ActQuantWrapper of {self.name}, forward shape {x.shape}")
+        print(x)
+        self.runtime_smooth = False
+        # import pdb; pdb.set_trace()
         # Rotate, if needed
         if self.online_full_had:
             
@@ -621,15 +633,19 @@ class ActQuantWrapper(torch.nn.Module):
                     act_scales = torch.gather(act_scales, -1, reverse_index)
                 x = x / act_scales
 
-            self.quantizer.find_params(x)
-            x = self.quantizer(x).to(x_dtype)
-            if self.runtime_smooth:
-                x = x * act_scales
-            self.quantizer.free()
+            if not "lm_head" in self.name:
+                self.quantizer.find_params(x)
+                x = self.quantizer(x).to(x_dtype)
+                if self.runtime_smooth:
+                    x = x * act_scales
+                self.quantizer.free()
+            else:
+                print("Pass for lm_head")
 
         x = self.module(x).to(x_dtype)
 
         if self.out_quantizer.bits < 16: #Quantize the output, if needed
+            print("out_quantizer.bits < 16")
             if self.runtime_smooth:
                 if len(x.shape) == 2:
                     act_scales = x.abs().max(dim=0,keepdim=True)[0]
@@ -775,6 +791,10 @@ def add_actquant(module, name='', layers=[torch.nn.Linear,
                                           ActQuantWrapper,
                                           transformers.models.falcon.modeling_falcon.FalconLinear]):
     if isinstance(module, ActQuantWrapper):
+        # print(f"add_actquant for {name}")
+        # module.name = name
+        setattr(module, "name", name)
+        # import pdb; pdb.set_trace()
         return
     for attr in dir(module):
         tmp = getattr(module, attr)

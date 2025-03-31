@@ -5,11 +5,15 @@ import torch
 from tqdm import tqdm
 
 def get_wikitext2(nsamples, seed, seqlen, model, hf_token, eval_mode=False):
-    
+
     if hf_token is None:
-        tokenizer = transformers.AutoTokenizer.from_pretrained(model, use_fast=False)
+        tokenizer = transformers.AutoTokenizer.from_pretrained(model, use_fast=False, model_max_length=2048,
+                                              padding_side="left",
+                                              trust_remote_code=True)
     else:
-        tokenizer = transformers.AutoTokenizer.from_pretrained(model, use_fast=False, use_auth_token=hf_token)
+        tokenizer = transformers.AutoTokenizer.from_pretrained(model, use_fast=False, use_auth_token=hf_token, model_max_length=2048,
+                                              padding_side="left",
+                                              trust_remote_code=True)
         
     # if eval_mode:
     #     testdata = datasets.load_dataset('wikitext', 'wikitext-2-raw-v1', split='test')
@@ -40,7 +44,8 @@ def get_wikitext2(nsamples, seed, seqlen, model, hf_token, eval_mode=False):
             trainloader.append((inp, tar))
             # trainloader.append({"input_ids": inp, "attention_mask": tar})
         return trainloader
-    
+
+
 def get_c4_new(nsamples, seed, seqlen, model, hf_token=None, eval_mode=False):
 
     if hf_token is None:
@@ -77,8 +82,6 @@ def get_c4_new(nsamples, seed, seqlen, model, hf_token=None, eval_mode=False):
             tar[:, :-1] = -100
             trainloader.append((inp, tar))
         return trainloader
-
-    
 
 
 def get_ptb_new(nsamples, seed, seqlen, model, hf_token, eval_mode=False):

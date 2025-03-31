@@ -9,6 +9,10 @@ import gptq_utils
 import eval_utils
 import hadamard_utils
 
+# torch.backends.cuda.enable_mem_efficient_sdp(False)
+# torch.backends.cuda.enable_flash_sdp(False)
+# torch.backends.cuda.enable_math_sdp(False)
+
 def main():
     args = utils.parser_gen()
     if args.wandb:
@@ -20,9 +24,9 @@ def main():
     model = model_utils.get_model(args.model, args.hf_token)
     model.eval()
 
-
     tokenizer = transformers.AutoTokenizer.from_pretrained(args.model,
                                               model_max_length=model.seqlen,
+                                              max_length=model.seqlen,
                                               padding_side="left",
                                               trust_remote_code=True,
                                               use_fast=False)
@@ -31,12 +35,12 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    trainloader = data_utils.get_loaders(
-        args.cal_dataset, nsamples=args.nsamples,
-        seed=args.seed, model=args.model,
-        seqlen=model.seqlen, 
-        eval_mode=False
-    )
+    # trainloader = data_utils.get_loaders(
+    #     args.cal_dataset, nsamples=args.nsamples,
+    #     seed=args.seed, model=args.model,
+    #     seqlen=model.seqlen, 
+    #     eval_mode=False
+    # )
 
     model.cuda()
         
@@ -120,7 +124,6 @@ def main():
         # pre_quant_optimizer.apply()
     
     quant_utils.add_actquant(model)
-
                 
     if args.w_bits < 16:
         save_dict = {}
@@ -148,13 +151,14 @@ def main():
     # Add Input Quantization
     if args.a_bits < 16 or args.v_bits < 16:
         qlayers = quant_utils.find_qlayers(model, layers=[quant_utils.ActQuantWrapper])
+        # import pdb; pdb.set_trace()
         down_proj_groupsize = -1
         if args.a_groupsize > 0 and "llama" in args.model:
             down_proj_groupsize = utils.llama_down_proj_groupsize(model, args.a_groupsize)
         
         for name in qlayers:            
             layer_input_bits = args.a_bits
-            layer_groupsize = args.a_groupsize
+            layer_groupsize = args.a_groupsize if not args.w_rtn else 32
             layer_a_sym = not(args.a_asym)
             layer_a_clip = args.a_clip_ratio
             
@@ -178,7 +182,8 @@ def main():
                     layer_input_bits = 8
                 layer_groupsize = down_proj_groupsize
 
-                
+            # import pdb; pdb.set_trace()
+            print(f"-->> configure quantizer for {name}")
             qlayers[name].quantizer.configure(bits=layer_input_bits,
                                               groupsize=layer_groupsize,
                                               sym=layer_a_sym,
@@ -198,49 +203,50 @@ def main():
     #                         rope_function_name, 
     #                         config=model.config,
     #                         **k_quant_config)
-        
+
     # Evaluating on dataset
-    testloader = data_utils.get_loaders(
-            args.eval_dataset,
-            seed=args.seed,
-            model=args.model,
-            seqlen=model.seqlen,
-            hf_token=args.hf_token,
-            eval_mode=True
-        )
+    # testloader = data_utils.get_loaders(
+    #         args.eval_dataset,
+    #         seed=args.seed,
+    #         model=args.model,
+    #         seqlen=model.seqlen,
+    #         hf_token=args.hf_token,
+    #         eval_mode=True
+    #     )
     
-    dataset_ppl = eval_utils.evaluator(model, testloader, utils.DEV, args)
+    # dataset_ppl = eval_utils.evaluator(model, testloader, utils.DEV, args)
 
     # rad_ppl = eval_utils.compute_perplexity(model, testloader, model.seqlen//2, tokenizer, seed = 0)
 
     # print(rad_ppl)
     
-
     if args.wandb:
-            wandb.log({'ppl/{}'.format(args.eval_dataset.upper()): dataset_ppl})
+        wandb.log({'ppl/{}'.format(args.eval_dataset.upper()): dataset_ppl})
 
     if not args.lm_eval:
         return
     else:
-        # Import lm_eval utils
         import lm_eval
         from lm_eval import utils as lm_eval_utils
         from lm_eval.api.registry import ALL_TASKS
         from lm_eval.models.huggingface import HFLM
-
-        
+        from lm_eval.utils import make_table
     
     if args.distribute:
         utils.distribute_model(model)
     else:
         model.to(utils.DEV)
+
+    # from quark.examples.torch.language_modeling.llm_eval.evaluation import task_eval
+    # task_eval(model, tokenizer, 1)
     
-    tokenizer = transformers.AutoTokenizer.from_pretrained(args.model, use_fast=False, use_auth_token=args.hf_token)
+    # tokenizer = transformers.AutoTokenizer.from_pretrained(args.model, use_fast=False, use_auth_token=args.hf_token)
     hflm = HFLM(pretrained=model, tokenizer=tokenizer, batch_size=args.lm_eval_batch_size)
 
-    task_names = lm_eval_utils.pattern_match(args.tasks, ALL_TASKS)
-    results = lm_eval.simple_evaluate(hflm, tasks='wikitext', batch_size=args.lm_eval_batch_size)['results']
-
+    # task_names = lm_eval_utils.pattern_match(args.tasks, ALL_TASKS)
+    # import pdb; pdb.set_trace() 
+    results = lm_eval.simple_evaluate(hflm, tasks='wikitext', batch_size=args.lm_eval_batch_size)
+    results = make_table(results).strip()
     print(results)
 
     # metric_vals = {task: round(result.get('acc_norm,none', result['acc,none']), 4) for task, result in results.items()}

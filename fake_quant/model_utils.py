@@ -52,7 +52,8 @@ def get_llama(model_name, hf_token):
     # )
     model = transformers.AutoModelForCausalLM.from_pretrained(model_name, torch_dtype="auto",
                                                           use_auth_token=hf_token,
-                                                          trust_remote_code=True)
+                                                          trust_remote_code=True,
+                                                          attn_implementation="eager")
     model.seqlen = 2048
     logging.info('---> Loading {} Model with seq_len: {}'.format(model_name, model.seqlen))
     return model
